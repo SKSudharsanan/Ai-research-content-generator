@@ -1,0 +1,1 @@
+The final answer of 15000 * 12 is 180000.
