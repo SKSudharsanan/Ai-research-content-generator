@@ -17,6 +17,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import interrupt, Command
 
 import gradio as gr
+from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
 load_dotenv()
 
@@ -272,9 +274,7 @@ def cli_loop():
 
 
 def launch_gradio():
-    
-
-    def chat_fn(message, history):
+    def chat_fn(message, history=None):
         thread_id = "gradio-user"
 
         config = {
@@ -299,38 +299,66 @@ def launch_gradio():
                 config=config,
                 stream_mode="updates",
             ):
+                print("\nEVENT:", event)
+
+                # Handle interrupts
                 if "__interrupt__" in event:
                     interrupted = True
 
                     interrupt_data = event["__interrupt__"][0].value
 
-                    response_text += "\n\nHuman approval required.\n"
-                    response_text += "For Gradio demo, auto-approving tool calls.\n"
+                    response_text += "\n\n🔧 Tool approval required\n"
 
-                    graph_input = Command(resume=True)
+                    for tool_call in interrupt_data.get("tool_calls", []):
+                        response_text += (
+                            f"\nTool: {tool_call['name']}"
+                            f"\nArgs: {tool_call['args']}\n"
+                        )
 
                     yield response_text
+
+                    # Auto approve in Gradio
+                    graph_input = Command(resume=True)
                     break
 
+                # Normal node updates
                 for node_name, node_output in event.items():
-                    if "messages" in node_output:
-                        last_message = node_output["messages"][-1]
 
-                        if last_message.content:
+                    if node_output is None:
+                        continue
+
+                    if not isinstance(node_output, dict):
+                        continue
+
+                    messages = node_output.get("messages")
+
+                    if not messages:
+                        continue
+
+                    last_message = messages[-1]
+
+                    if hasattr(last_message, "content") and last_message.content:
+
+                        if isinstance(last_message.content, str):
                             response_text = last_message.content
                             yield response_text
 
             if not interrupted:
                 break
 
+        yield response_text
+
     demo = gr.ChatInterface(
         fn=chat_fn,
-        title="LangGraph Tool Agent",
+        title="LangGraph Agent",
         description="LangGraph agent with memory, streaming, tools, and human approval.",
     )
 
-    demo.launch()
-
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+    )
 
 if __name__ == "__main__":
     mode = input("Choose mode: cli / gradio: ").strip().lower()
